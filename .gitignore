@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.DS_Store
+# dữ liệu, cache, checkpoint và kết quả sinh ra khi chạy (nằm trên Drive)
+cache/
+data/
+results/
+*.npz
+*.npy
+*.pt
+*.nii.gz
+*.zip
+kaggle.json
