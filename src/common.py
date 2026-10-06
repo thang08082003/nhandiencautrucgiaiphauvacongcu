@@ -1,4 +1,4 @@
-"""Tiện ích dùng chung: seed, log lệnh, metrics (Dice/IoU/HD95), đo tốc độ, vẽ overlay."""
+"""Tiện ích dùng chung: seed, log lệnh, metrics (Dice/IoU/HD95/NSD), đo tốc độ, vẽ overlay."""
 import datetime
 import os
 import subprocess
@@ -57,45 +57,58 @@ def _bbox(m, pad=2):
     return tuple(slice(max(i.min() - pad, 0), i.max() + pad + 1) for i in np.nonzero(m))
 
 
-def hd95(p, g, spacing):
-    """HD95 giữa hai mặt nạ nhị phân (đơn vị theo spacing). NaN nếu một trong hai rỗng."""
+def surface_dists(p, g, spacing):
+    """Khoảng cách từ bề mặt dự đoán tới bề mặt GT và ngược lại. None nếu một trong hai rỗng."""
     from scipy import ndimage as ndi
     if not p.any() or not g.any():
-        return np.nan
+        return None
     sl = _bbox(p | g)
     p, g = p[sl], g[sl]
     sp, sg = p & ~ndi.binary_erosion(p), g & ~ndi.binary_erosion(g)
     dg = ndi.distance_transform_edt(~sg, sampling=spacing)
     dp = ndi.distance_transform_edt(~sp, sampling=spacing)
-    return float(np.percentile(np.concatenate([dg[sp], dp[sg]]), 95))
+    return dg[sp], dp[sg]
 
 
-def eval_case(pred, gt, names, spacing, hd=True):
-    """names: {id: tên}. Nhãn vắng trong GT -> NaN (bỏ qua). GT có mà pred rỗng -> Dice=0, HD95=NaN."""
+def hd95(p, g, spacing):
+    """HD95 giữa hai mặt nạ nhị phân (đơn vị theo spacing). NaN nếu một trong hai rỗng."""
+    d = surface_dists(p, g, spacing)
+    return np.nan if d is None else float(np.percentile(np.concatenate(d), 95))
+
+
+def nsd(p, g, spacing, tol):
+    """Normalized Surface Dice: tỉ lệ điểm bề mặt nằm trong `tol` (cùng đơn vị spacing) của bề mặt kia. NaN nếu rỗng."""
+    d = surface_dists(p, g, spacing)
+    return np.nan if d is None else float(((d[0] <= tol).sum() + (d[1] <= tol).sum()) / (len(d[0]) + len(d[1])))
+
+
+def eval_case(pred, gt, names, spacing, hd=True, tol=2.0):
+    """names: {id: tên}. Nhãn vắng trong GT -> NaN (bỏ qua). GT có mà pred rỗng -> Dice=0, HD95/NSD=NaN.
+    Trả về (dice, iou, hd95, nsd); `tol` là ngưỡng NSD theo đơn vị spacing (CT: mm, 2D: pixel)."""
     rows = {}
     for k, n in names.items():
         p, g = pred == k, gt == k
         if not g.any():
-            rows[n] = (np.nan, np.nan, np.nan)
+            rows[n] = (np.nan,) * 4
             continue
         inter = (p & g).sum()
         rows[n] = (2 * inter / (p.sum() + g.sum()), inter / (p.sum() + g.sum() - inter),
-                   hd95(p, g, spacing) if hd else np.nan)
+                   hd95(p, g, spacing) if hd else np.nan, nsd(p, g, spacing, tol) if hd else np.nan)
     return rows
 
 
 def rows_df(per_case):
-    """per_case: {case: eval_case(...)} -> DataFrame(case,label,dice,iou,hd95)."""
+    """per_case: {case: eval_case(...)} -> DataFrame(case,label,dice,iou,hd95,nsd)."""
     import pandas as pd
-    return pd.DataFrame([dict(case=c, label=n, dice=v[0], iou=v[1], hd95=v[2])
+    return pd.DataFrame([dict(case=c, label=n, dice=v[0], iou=v[1], hd95=v[2], nsd=v[3])
                          for c, r in per_case.items() for n, v in r.items()])
 
 
 def metrics_table(df):
-    t = df.groupby("label", sort=False)[["dice", "iou", "hd95"]].mean()
+    t = df.groupby("label", sort=False)[["dice", "iou", "hd95", "nsd"]].mean()
     t["dice_std"] = df.groupby("label", sort=False)["dice"].std()
     t["n_cases"] = df.dropna(subset=["dice"]).groupby("label", sort=False).size()
-    t.loc["MEAN"] = [t["dice"].mean(), t["iou"].mean(), t["hd95"].mean(), np.nan, np.nan]
+    t.loc["MEAN"] = [t["dice"].mean(), t["iou"].mean(), t["hd95"].mean(), t["nsd"].mean(), np.nan, np.nan]
     return t.reset_index()
 
 

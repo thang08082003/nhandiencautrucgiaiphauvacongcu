@@ -21,10 +21,10 @@ def meta(name):
     return json.load(open(CACHE / name / "meta.json"))
 
 
-def build(name, pretrained=True):
+def build(name, pretrained=True, encoder=None, arch="Unet"):
     m = meta(name)
-    return smp.Unet(ENC[name], encoder_weights="imagenet" if pretrained else None,
-                    in_channels=m["in_ch"], classes=len(m["names"]))
+    return getattr(smp, arch)(encoder or ENC[name], encoder_weights="imagenet" if pretrained else None,
+                              in_channels=m["in_ch"], classes=len(m["names"]))
 
 
 def prep(xb):

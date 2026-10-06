@@ -101,7 +101,27 @@ Cấu hình: {(R / 'ct' / 'config.json').read_text() if (R / 'ct' / 'config.json
 ### CholecSeg8k
 {md(R / 'cholecseg8k' / 'speed_benchmark.csv')}
 
-## f) Danh sách hình
+## f) Tuần 3-4
+### CT: nnU-Net 3D (cùng ca test, không gian ảnh gốc)
+{md(R / 'ct' / 'nnunet_metrics.csv')}
+### Phân tích lỗi 2D
+CAMUS:
+
+{md(R / 'camus' / 'errors' / 'error_summary.csv')}
+
+CholecSeg8k:
+
+{md(R / 'cholecseg8k' / 'errors' / 'error_summary.csv')}
+### Ablation 2D (test; mỗi dòng đổi một thứ so với baseline)
+CAMUS:
+
+{md(R / 'camus' / 'ablation_table.csv')}
+
+CholecSeg8k:
+
+{md(R / 'cholecseg8k' / 'ablation_table.csv')}
+
+## g) Danh sách hình
 """ + "\n".join(f"- `{f}`: (Claude ghi ý nghĩa sau)" for f in figs) + "\n"
     (R / "REPORT_DATA.md").write_text(txt)
     print("Đã ghi", R / "REPORT_DATA.md")
