@@ -8,6 +8,7 @@ nnU-Net dùng val trong splits_final.json làm tập theo dõi; không dùng tes
 import argparse
 import json
 import os
+import shutil
 
 import numpy as np
 import pandas as pd
@@ -43,11 +44,11 @@ def prepare():
         sitk.WriteImage(l2, str(RAW / DS / "labelsTr" / f"{c}.nii.gz"))
         dst = RAW / DS / "imagesTr" / f"{c}_0000.nii.gz"
         if not dst.exists():
-            os.symlink(img, dst)
+            shutil.copy(img, dst)  # Drive không hỗ trợ symlink
     for c in sp["test"]:
         dst = RAW / DS / "imagesTs" / f"{c}_0000.nii.gz"
         if not dst.exists():
-            os.symlink(CT / "test_raw" / f"{c}_img.nii.gz", dst)
+            shutil.copy(CT / "test_raw" / f"{c}_img.nii.gz", dst)
     json.dump({"channel_names": {"0": "CT"}, "labels": {"background": 0, **{n: k for k, n in NAMES.items()}},
                "numTraining": len(sp["train"]) + len(sp["val"]), "file_ending": ".nii.gz"},
               open(RAW / DS / "dataset.json", "w"), indent=1)
