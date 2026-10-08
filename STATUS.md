@@ -1,25 +1,26 @@
-# STATUS (cập nhật 2026-10-06, buổi tối)
+# STATUS (Claude Code, 2026-10-07)
 
-Tệp này để trợ lý khác (chỉ đọc được GitHub repo này và Drive `MyDrive/anatomy_project/`) nắm trạng thái chạy thực nghiệm.
+All experiments are finished. Numbers: `results/REPORT_DATA.md` (regenerated 2026-10-07 15:49 UTC by `report_tables.py`). Code on Drive `src/` (GitHub will be updated when the user says all work is done).
 
-## Đã xong (kết quả nằm ở Drive `results/`, bảng tổng ở `results/REPORT_DATA.md`)
-- Tuần 1-2: 3 mô hình nền (CT 3D U-Net, CAMUS U-Net ResNet-18, CholecSeg8k U-Net MobileNetV2).
-- Tuần 3-4 phần 2D: Cell 10 (phân tích lỗi), Cell 12 (8 lượt ablation, 0 lỗi, không NaN), Cell 13 (ensemble + bảng ablation + `REPORT_DATA.md`).
-- Tất cả chạy 1 seed (42). Cột NSD của dòng `baseline (tuần 3)` là `nan` (baseline huấn luyện trước khi có NSD).
+## nnU-Net v2 3d_fullres (CT, 6 test cases, evaluated on the original grid)
+- Trainer `nnUNetTrainer_20epochs` (20 epochs instead of 1000, because of the GPU quota). Epochs 0-8 on Colab T4 (~374 s/epoch), epochs 9-19 on Kaggle T4 (resumed with `--c`, ~234 s/epoch). Inference uses `checkpoint_best.pth`. Mean validation Dice (nnU-Net) 0.860.
+- Test: Dice 0.795, HD95 60.8 mm (`results/ct/nnunet_metrics.csv`). Per label: spleen 0.933, kidney_right 0.840, kidney_left 0.830, gallbladder 0.536, liver 0.948, pancreas 0.683.
+- Dataset built from `cache/ct/*.npy` (same 1.5 mm input as the custom 3D U-Net, no AMOS re-download). Splits are identical to data_ct.py (splits_final.json).
 
-## Chưa xong: nnU-Net 3D CT (Cell 11)
-Chưa có `results/ct/nnunet_metrics.csv`; mục f của `REPORT_DATA.md` ghi "(chưa có ct/nnunet_metrics.csv)". Lý do, theo thứ tự:
-1. `src/nnunet_ct.py` dòng 39 (`next(OUT.rglob(...))`) báo `StopIteration`: `OUT = /content/data/amos` bị mất khi runtime Colab reset. Cách xử lý: chạy lại Cell 3 (`python data_ct.py --n 40`, cần gõ `yes` xác nhận tải ~1525 MB).
-2. `os.symlink` trên ổ Drive báo `OSError: [Errno 95] Operation not supported`. Đã sửa bằng `shutil.copy` (commit `561e753` trên `main`, bản trên Drive cũng đã sửa).
-3. Sau khi sửa, `prepare` chạy qua, nnU-Net đang lập kế hoạch/tiền xử lý thì Colab báo hết hạn mức GPU. Chưa tới bước `train`. Thư mục `cache/nnunet/` trên Drive có trạng thái `prepare` dở.
+## Post-processing (largest connected component per label, `src/postprocess.py`)
+- Custom 3D U-Net: Dice 0.770 -> 0.769, HD95 33.8 -> 12.7 mm (`results/ct/pred_custom_pp_metrics.csv`).
+- nnU-Net: Dice 0.795 -> 0.794, HD95 60.8 -> 11.7 mm (`results/ct/pred_nnunet_pp_metrics.csv`); spleen 0.939, kidney_r 0.848, kidney_l 0.837, gallbladder 0.554, liver 0.957, pancreas 0.634 (pancreas drops: fragmented organ).
+- CAMUS skipped: 2D predictions are not saved to disk; 2D models already output one blob per structure.
 
-## Việc tiếp theo (khi có lại GPU Colab)
-Chạy tuần tự: Cell 1 -> Cell 3 (người dùng đồng ý `yes`) -> Cell 11 -> (nếu có) Cell 14 -> `python report_tables.py` để cập nhật `REPORT_DATA.md`.
+## CholecSeg8k: 4 extra runs (30-min budget each, Kaggle T4, ~50-57 s/epoch, comparable to Colab's 55-62 s/epoch)
+Test mean Dice / NSD (6 classes present in test):
+- aug_focal (strong aug + Dice+Focal, seed 42): 0.856 / 0.735, 32 epochs
+- base_s1 (baseline config, seed 1): 0.846 / 0.703, 37 epochs
+- aug_strong_s1 (seed 1): 0.854 / 0.723, 37 epochs
+- aug_focal_s1 (seed 1): 0.852 / 0.713, 32 epochs
+Results in `results/cholecseg8k/ablation/<tag>/`; `analyze_2d.py ablation` was rerun for cholec and camus.
+Note: Kaggle T4 vs Colab T4 for these 4 runs; seed variation (42 vs 1) is about 0.01 Dice, so ablation differences below that are within noise.
 
-## Quy ước làm việc
-- Code thay đổi phải lên GitHub `main`; người dùng chép `src/` và `colab_run.ipynb` lên Drive (Colab đọc từ Drive, không đọc GitHub).
-- Đừng gửi patch qua tệp cục bộ; hãy sửa thẳng trên `main` hoặc mô tả thay đổi để người dùng áp dụng.
-- Không đưa token (Kaggle, API) vào repo hay chat. Repo giữ private (dữ liệu CAMUS/CholecSeg8k là CC BY-NC-SA 4.0).
-- HD95: 2D tính bằng pixel (256x256), CT tính bằng mm, không so sánh trực tiếp.
-- Đừng bật lại AMP trong `src/train_ct.py` (fp16 gây NaN).
-- Cell có lệnh `rm -r` trong notebook Colab trên Drive (cell tạm) chỉ dùng một lần; không chạy lại, sẽ xóa kết quả ablation thật.
+## Not done / caveats
+- Only 20 nnU-Net epochs: nnU-Net is under-trained, its HD95 before post-processing is dominated by small false-positive islands.
+- Single seed for everything except the CholecSeg8k seed-1 replicates above.
