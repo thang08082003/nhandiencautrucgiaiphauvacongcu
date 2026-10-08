@@ -7,15 +7,14 @@ nnU-Net dùng val trong splits_final.json làm tập theo dõi; không dùng tes
 """
 import argparse
 import json
-import os
-import shutil
 
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
 
-from common import CACHE, DATA, RESULTS, eval_case, metrics_table, rows_df, sh, start
-from data_ct import KEEP, NAMES, OUT
+from common import CACHE, RESULTS, eval_case, metrics_table, rows_df, sh, start
+from data_ct import NAMES
+from train_ct import to_orig
 
 DS = "Dataset501_AMOS6"
 BASE = CACHE / "nnunet"
@@ -29,26 +28,23 @@ def split():
     return {s: d[d.split == s].case.tolist() for s in ("train", "val", "test")}
 
 
+def nii(arr, cid, dst):
+    g = json.load(open(CT / f"{cid}_geom.json"))
+    im = sitk.GetImageFromArray(arr)
+    im.SetSpacing(g["spacing"]), im.SetOrigin(g["origin"]), im.SetDirection(g["direction"])
+    sitk.WriteImage(im, str(dst))
+
+
 def prepare():
+    # dựng từ cache/ct/*.npy (đã resample 1.5 mm, HU->[0,1]): không cần tải lại AMOS, cùng đầu vào với 3D U-Net tự huấn luyện
     sp = split()
     for d in ("imagesTr", "labelsTr", "imagesTs"):
         (RAW / DS / d).mkdir(parents=True, exist_ok=True)
-    lut = np.zeros(256, np.uint8)
-    for new, _, amos, _ in KEEP:
-        lut[amos] = new
     for c in sp["train"] + sp["val"]:
-        img = next(OUT.rglob(f"imagesTr/{c}.nii.gz"))
-        lab = sitk.ReadImage(str(img.parent.parent / "labelsTr" / img.name))
-        l2 = sitk.GetImageFromArray(lut[sitk.GetArrayFromImage(lab)])
-        l2.CopyInformation(lab)
-        sitk.WriteImage(l2, str(RAW / DS / "labelsTr" / f"{c}.nii.gz"))
-        dst = RAW / DS / "imagesTr" / f"{c}_0000.nii.gz"
-        if not dst.exists():
-            shutil.copy(img, dst)  # Drive không hỗ trợ symlink
+        nii(np.load(CT / f"{c}_img.npy").astype(np.float32), c, RAW / DS / "imagesTr" / f"{c}_0000.nii.gz")
+        nii(np.load(CT / f"{c}_lab.npy"), c, RAW / DS / "labelsTr" / f"{c}.nii.gz")
     for c in sp["test"]:
-        dst = RAW / DS / "imagesTs" / f"{c}_0000.nii.gz"
-        if not dst.exists():
-            shutil.copy(CT / "test_raw" / f"{c}_img.nii.gz", dst)
+        nii(np.load(CT / f"{c}_img.npy").astype(np.float32), c, RAW / DS / "imagesTs" / f"{c}_0000.nii.gz")
     json.dump({"channel_names": {"0": "CT"}, "labels": {"background": 0, **{n: k for k, n in NAMES.items()}},
                "numTraining": len(sp["train"]) + len(sp["val"]), "file_ending": ".nii.gz"},
               open(RAW / DS / "dataset.json", "w"), indent=1)
@@ -61,8 +57,15 @@ def train(a):
 
 
 def predict(a):
-    sh(f"{ENV} nnUNetv2_predict -i {RAW / DS / 'imagesTs'} -o {CT / 'pred_nnunet'} -d 501 -c 3d_fullres "
-       f"-tr {a.trainer} -f 0 -chk checkpoint_best.pth")
+    tmp = CT / "pred_nnunet_1p5mm"
+    if not all((tmp / f"{c}.nii.gz").exists() for c in split()["test"]):  # đã có (vd. kéo từ Kaggle) thì bỏ qua suy luận
+        sh(f"{ENV} nnUNetv2_predict -i {RAW / DS / 'imagesTs'} -o {tmp} -d 501 -c 3d_fullres "
+           f"-tr {a.trainer} -f 0 -chk checkpoint_best.pth")
+    (CT / "pred_nnunet").mkdir(exist_ok=True)
+    for c in split()["test"]:  # resample về lưới gốc như train_ct.to_orig để so công bằng
+        pr = sitk.GetArrayFromImage(sitk.ReadImage(str(tmp / f"{c}.nii.gz")))
+        o, _ = to_orig(pr, c)
+        sitk.WriteImage(o, str(CT / "pred_nnunet" / f"{c}.nii.gz"))
 
 
 def evaluate():
